@@ -208,7 +208,7 @@ Venice.collection.new = function(name, venice_instance, collection_loaded_callba
 	this.documents = {};
 	this.stat = {
 		'documents': [],
-		'compaction_interval': 1 // Time in seconds between checking for compactions (should be fairly high for performance)
+		'compaction_interval': 60 // Time in seconds between checking for compactions (should be fairly high for performance)
 	}
 	this.compaction_interval_id = null;
 	
@@ -366,7 +366,6 @@ Venice.collection.document.new = function(name, collection_instance, venice_inst
 				document.read_version(document.stat.latest, function(data) {
 					var state = clone(data), version = document.stat.latest;
 					
-					//if(venice.development()) console.log(document.console_name()+'.'+transformation.version+': Transformation saved');
 					var t_start = (new Date()).getTime();
 					if(venice.development()) console.log(document.console_name()+'/compaction: Beginning compaction');
 					
@@ -394,6 +393,7 @@ Venice.collection.document.new = function(name, collection_instance, venice_inst
 					
 					new_version = previous_version;
 					
+					// Write the new version, update the stat file, then update the caches.
 					fs.writeFile(document.path+'.'+new_version, JSON.stringify(state), function(err) {
 						if(err) throw err;
 						
@@ -413,16 +413,17 @@ Venice.collection.document.new = function(name, collection_instance, venice_inst
 							
 							worker.finish();
 							
-						}); // stat_update_latest()
+						}); // document.stat_update_latest()
 						
 					}); // fs()
 					
-				});
+				}); // document.read_version()
 				
 			}); // version_write_chain.add()
 			
 		} else {} // No transformations in the queue
 	}
+	// Used to add a new transformation to the queue.
 	this.transform = function(tfunc, cache_callback, callback) {
 		//document.transformation_queue.add
 		//var state = document.transform_state(clone(document.cache.latest));
@@ -472,7 +473,7 @@ Venice.collection.document.new = function(name, collection_instance, venice_inst
 		}
 	}
 	
-	// Takes a state and transformation func and runs the transformation on the state (document's data).
+	// Takes a state and transformation function and runs the transformation on the state (document's data).
 	this.transform_state = function(state, tfunc) {
 		var state = clone(state); // For good measure
 		ret = tfunc(state);
@@ -494,9 +495,14 @@ Venice.collection.document.new = function(name, collection_instance, venice_inst
 		});
 	}
 	
-	/* 	Saves a full copy of the document to the database and sets that copy as the latest version.
-			
-			EXECUTION FLOW:
+	/* WARNING:
+		 This is a dangerous operation; it OVERWRITES the entire document and ignores the state of the
+		 transaction queue. In a production environment, I can almost guarantee you will lose data.
+		 Transformations are the way of the future, so use them!
+		 
+		 Saves a full copy of the document to the database and sets that copy as the latest version.
+		 
+		 EXECUTION FLOW:
 					1. Check type of input data (string or not?)
 					2. Add the following instructions to the version queue.
 							1. Calculate a new version time
